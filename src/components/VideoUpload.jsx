@@ -114,9 +114,9 @@ export default function VideoUpload({ onUploadSuccess }) {
           } else {
             try {
               const errRes = JSON.parse(xhr.responseText);
-              setUploadError(errRes.error || 'আপলোড ব্যর্থ হয়েছে।');
+              setUploadError(errRes.error || `আপলোড ব্যর্থ হয়েছে (স্ট্যাটাস: ${xhr.status})`);
             } catch {
-              setUploadError('আপলোড ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+              setUploadError(`আপলোড ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন। (স্ট্যাটাস: ${xhr.status})`);
             }
             setIsUploading(false);
           }
@@ -225,7 +225,7 @@ export default function VideoUpload({ onUploadSuccess }) {
             uploadToServerProxy();
           };
 
-          cXhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`, true);
+          cXhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, true);
           cXhr.send(cFormData);
           return;
         }
