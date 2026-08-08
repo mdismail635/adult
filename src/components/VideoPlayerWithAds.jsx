@@ -7,10 +7,9 @@ import AdBanner from './AdBanner';
 import SocialAdContainer from './SocialAdContainer';
 
 export default function VideoPlayerWithAds({ video, onClose }) {
-  // Set isAdPlaying to true by default for Interstitial (ইন্ডাস্ট্রিয়াল) Ad on video play
+  // Interstitial Ad Overlay state
   const [isAdPlaying, setIsAdPlaying] = useState(video.adsEnabled !== false);
-  const [adCountdown, setAdCountdown] = useState(5);
-  const [canSkipAd, setCanSkipAd] = useState(false);
+  const [adCountdown, setAdCountdown] = useState(3);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -21,18 +20,25 @@ export default function VideoPlayerWithAds({ video, onClose }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const mainVideoRef = useRef(null);
-  const adVideoRef = useRef(null);
   const playerContainerRef = useRef(null);
   const bannerTimerRef = useRef(null);
 
-  // 5-Second Interstitial Countdown Timer
+  // 3-Second Auto-dismiss timer for Interstitial Ad
   useEffect(() => {
     if (isAdPlaying) {
       const timer = setInterval(() => {
         setAdCountdown((prev) => {
           if (prev <= 1) {
             clearInterval(timer);
-            setCanSkipAd(true);
+            // Auto close ad and play video after 3 seconds
+            setIsAdPlaying(false);
+            setTimeout(() => {
+              if (mainVideoRef.current) {
+                mainVideoRef.current.play()
+                  .then(() => setIsPlaying(true))
+                  .catch(() => setIsPlaying(false));
+              }
+            }, 100);
             return 0;
           }
           return prev - 1;
@@ -42,7 +48,7 @@ export default function VideoPlayerWithAds({ video, onClose }) {
     }
   }, [isAdPlaying]);
 
-  // Auto-play main video on mount when pre-roll/interstitial is finished
+  // Auto-play main video when ad overlay is closed
   useEffect(() => {
     if (!isAdPlaying) {
       const playTimer = setTimeout(() => {
@@ -55,7 +61,7 @@ export default function VideoPlayerWithAds({ video, onClose }) {
               setIsPlaying(false);
             });
         }
-      }, 300);
+      }, 200);
       return () => clearTimeout(playTimer);
     }
   }, [isAdPlaying]);
@@ -63,15 +69,7 @@ export default function VideoPlayerWithAds({ video, onClose }) {
   // Handle Play/Pause
   const handlePlayPause = () => {
     if (isAdPlaying) {
-      const adVid = adVideoRef.current;
-      if (adVid) {
-        if (isPlaying) {
-          adVid.pause();
-        } else {
-          adVid.play().catch(() => {});
-        }
-        setIsPlaying(!isPlaying);
-      }
+      handleSkipAd();
     } else {
       const mainVid = mainVideoRef.current;
       if (mainVid) {
@@ -85,21 +83,12 @@ export default function VideoPlayerWithAds({ video, onClose }) {
     }
   };
 
-  // Handle Skip Ad (Keep helper in case pre-rolls are turned back on)
+  // Handle Skip Ad / Start Video
   const handleSkipAd = () => {
     setIsAdPlaying(false);
     setIsPlaying(true);
-    setAdCountdown(0);
-    setCanSkipAd(false);
     
-    // Open user's Direct Link popunder in a new tab when ad is skipped
-    try {
-      window.open("https://www.effectivecpmnetwork.com/jf5hm6pecw?key=fce7c69f35907acc5fda26e628d9e73f", "_blank");
-    } catch (e) {
-      console.warn("Popup blocked by browser security settings.", e);
-    }
-    
-    // Play main video after switching
+    // Attempt playback directly
     setTimeout(() => {
       const mainVid = mainVideoRef.current;
       if (mainVid) {
@@ -112,24 +101,25 @@ export default function VideoPlayerWithAds({ video, onClose }) {
 
   // Sync Volume
   useEffect(() => {
-    const activeVideo = isAdPlaying ? adVideoRef.current : mainVideoRef.current;
-    if (activeVideo) {
-      activeVideo.volume = isMuted ? 0 : volume;
+    if (mainVideoRef.current) {
+      mainVideoRef.current.volume = isMuted ? 0 : volume;
     }
-  }, [volume, isMuted, isAdPlaying]);
+  }, [volume, isMuted]);
 
   // Update Progress / Time
   const handleTimeUpdate = () => {
-    const videoEl = isAdPlaying ? adVideoRef.current : mainVideoRef.current;
-    if (videoEl && !isAdPlaying) {
+    const videoEl = mainVideoRef.current;
+    if (videoEl) {
       setCurrentTime(videoEl.currentTime);
-      setProgress((videoEl.currentTime / videoEl.duration) * 100);
+      if (videoEl.duration) {
+        setProgress((videoEl.currentTime / videoEl.duration) * 100);
+      }
     }
   };
 
   const handleLoadedMetadata = () => {
-    const videoEl = isAdPlaying ? adVideoRef.current : mainVideoRef.current;
-    if (videoEl && !isAdPlaying) {
+    const videoEl = mainVideoRef.current;
+    if (videoEl) {
       setDuration(videoEl.duration);
     }
   };
@@ -207,16 +197,47 @@ export default function VideoPlayerWithAds({ video, onClose }) {
         </div>
 
         {/* Custom Video Player Container */}
-        <div className="video-player-container" ref={playerContainerRef}>
-          {isAdPlaying ? (
-            /* Interstitial (ইন্ডাস্ট্রিয়াল) Ad Screen */
-            <div className="ad-overlay-screen" style={{ background: '#0a0a16', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.5rem', position: 'relative' }}>
-              <div style={{ position: 'absolute', top: '1rem', left: '1rem', background: 'rgba(236, 72, 153, 0.2)', color: 'var(--accent-pink)', border: '1px solid var(--accent-pink)', padding: '0.35rem 0.75rem', borderRadius: '20px', fontSize: '0.8rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <ShoppingBag size={14} /> স্পন্সর ইন্টারস্টিশিয়াল এড (Sponsored Interstitial Ad)
+        <div className="video-player-container" ref={playerContainerRef} style={{ position: 'relative' }}>
+          {/* Main Content Video - Always rendered so it buffers and plays smoothly */}
+          <video
+            ref={mainVideoRef}
+            className="html5-video"
+            src={video.videoUrl}
+            onClick={handlePlayPause}
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleLoadedMetadata}
+            onEnded={() => setIsPlaying(false)}
+            controls={false}
+            playsInline
+          />
+
+          {/* Interstitial (ইন্ডাস্ট্রিয়াল) Ad Screen Overlay on top of video */}
+          {isAdPlaying && (
+            <div 
+              className="ad-overlay-screen" 
+              style={{ 
+                position: 'absolute', 
+                top: 0, 
+                left: 0, 
+                right: 0, 
+                bottom: 0, 
+                zIndex: 30, 
+                background: 'rgba(10, 10, 22, 0.92)', 
+                backdropFilter: 'blur(8px)',
+                display: 'flex', 
+                flexDirection: 'column', 
+                alignItems: 'center', 
+                justify: 'center', 
+                padding: '1rem',
+                overflowY: 'auto'
+              }}
+            >
+              <div style={{ position: 'absolute', top: '0.75rem', left: '0.75rem', background: 'rgba(236, 72, 153, 0.2)', color: 'var(--accent-pink)', border: '1px solid var(--accent-pink)', padding: '0.3rem 0.6rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <ShoppingBag size={13} /> স্পন্সর এড (Sponsored Ad)
               </div>
 
               {/* Interstitial Ad Banner Component */}
-              <div style={{ margin: '2rem 0 1rem 0', width: '100%', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ margin: '1.5rem 0 0.75rem 0', width: '100%', display: 'flex', justifyContent: 'center' }}>
                 <AdBanner bannerKey="e72872f3ed67b48725149e3ab09e20ff" width={468} height={60} />
               </div>
 
@@ -224,150 +245,147 @@ export default function VideoPlayerWithAds({ video, onClose }) {
               <div 
                 onClick={handleSkipAd}
                 style={{ 
-                  background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(236, 72, 153, 0.2) 100%)',
+                  background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.25) 0%, rgba(236, 72, 153, 0.25) 100%)',
                   border: '2px solid var(--accent-purple)',
                   borderRadius: '12px',
-                  padding: '1.25rem 2rem',
-                  maxWidth: '480px',
+                  padding: '1rem 1.5rem',
+                  maxWidth: '460px',
+                  width: '90%',
                   textAlign: 'center',
                   cursor: 'pointer',
                   boxShadow: '0 8px 32px rgba(124, 58, 237, 0.3)',
-                  marginBottom: '1.5rem',
+                  marginBottom: '1rem',
                   transition: 'transform 0.2s ease, border-color 0.2s ease'
                 }}
               >
-                <div style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.4rem' }}>
-                  🔥 বিশেষ স্পন্সর অফার (Sponsored Offer)
+                <div style={{ color: '#fff', fontSize: '1rem', fontWeight: '700', marginBottom: '0.3rem' }}>
+                  🔥 বিশেষ স্পন্সর অফার (Click to Play Video)
                 </div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.8rem' }}>
-                  ভিডিও লোড হচ্ছে... অফার দেখতে বা সরাসরি ভিডিও চালু করতে নিচে ক্লিক করুন।
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.6rem' }}>
+                  সরাসরি ভিডিও প্লে করতে বা অফার দেখতে এখানে ক্লিক করুন
                 </div>
-                <div style={{ background: 'var(--accent-purple)', color: '#fff', fontWeight: '600', padding: '0.6rem 1.2rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-                  <DollarSign size={16} /> স্পন্সর সাইটে যান ও ভিডিও প্লে করুন
+                <div style={{ background: 'var(--accent-purple)', color: '#fff', fontWeight: '600', padding: '0.5rem 1rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                  <DollarSign size={15} /> ভিডিও প্লে করুন / Skip Ad
                 </div>
               </div>
 
               {/* Timer Bar & Skip Action */}
-              <div className="ad-info-bar" style={{ width: '100%', maxWidth: '480px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.05)', padding: '0.75rem 1rem', borderRadius: '8px' }}>
-                <div className="ad-countdown-pill" style={{ fontSize: '0.9rem', color: '#fff', fontWeight: '600' }}>
-                  {canSkipAd ? 'ভিডিও প্রস্তুত!' : `এড শেষ হতে বাকি: ${adCountdown}s`}
+              <div className="ad-info-bar" style={{ width: '90%', maxWidth: '460px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.08)', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
+                <div className="ad-countdown-pill" style={{ fontSize: '0.85rem', color: '#fff', fontWeight: '600' }}>
+                  {adCountdown > 0 ? `অটো-প্লে হতে বাকি: ${adCountdown}s` : 'ভিডিও প্লে হচ্ছে...'}
                 </div>
 
-                {canSkipAd ? (
-                  <button className="ad-skip-btn" onClick={handleSkipAd} style={{ background: 'var(--accent-pink)', color: '#fff', padding: '0.5rem 1rem', borderRadius: '6px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    Skip Ad / ভিডিও দেখুন <SkipForward size={16} />
-                  </button>
-                ) : (
-                  <div className="ad-skip-locked-btn" style={{ opacity: 0.6, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    Skip Ad in {adCountdown}s
-                  </div>
-                )}
+                <button 
+                  className="ad-skip-btn" 
+                  onClick={handleSkipAd} 
+                  style={{ 
+                    background: 'var(--accent-pink)', 
+                    color: '#fff', 
+                    padding: '0.45rem 0.9rem', 
+                    borderRadius: '6px', 
+                    fontWeight: '600', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '0.4rem',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  Skip Ad / ভিডিও প্লে করুন <SkipForward size={15} />
+                </button>
               </div>
             </div>
-          ) : (
-            /* Main Content Video */
-            <>
-              <video
-                ref={mainVideoRef}
-                className="html5-video"
-                src={video.videoUrl}
-                onClick={handlePlayPause}
-                onTimeUpdate={handleTimeUpdate}
-                onLoadedMetadata={handleLoadedMetadata}
-                onEnded={() => setIsPlaying(false)}
-              />
+          )}
 
-              {/* Video Play Overlay Button (Middle) */}
-              {!isPlaying && (
-                <div className="video-card-play-overlay" style={{ opacity: 1, pointerEvents: 'none' }}>
-                  <div className="play-overlay-button" style={{ pointerEvents: 'auto' }} onClick={handlePlayPause}>
-                    <Play size={24} style={{ fill: 'currentColor' }} />
-                  </div>
-                </div>
-              )}
+          {/* Video Play Overlay Button (Middle) */}
+          {!isPlaying && !isAdPlaying && (
+            <div className="video-card-play-overlay" style={{ opacity: 1, pointerEvents: 'none' }}>
+              <div className="play-overlay-button" style={{ pointerEvents: 'auto' }} onClick={handlePlayPause}>
+                <Play size={24} style={{ fill: 'currentColor' }} />
+              </div>
+            </div>
+          )}
 
-              {/* Custom Player Controls Skin */}
-              <div className="player-controls-bar">
-                {/* Timeline slider */}
-                <div className="timeline-slider-container" onClick={handleSeek}>
-                  <div className="timeline-progress" style={{ width: `${progress}%` }}>
-                    <div className="timeline-handle" />
-                  </div>
-                </div>
-
-                {/* Buttons Row */}
-                <div className="controls-buttons">
-                  <div className="left-controls">
-                    <button className="control-btn" onClick={handlePlayPause}>
-                      {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-                    </button>
-
-                    <div className="volume-container">
-                      <button className="control-btn" onClick={() => setIsMuted(!isMuted)}>
-                        {isMuted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
-                      </button>
-                      <div 
-                        className="volume-slider" 
-                        onClick={(e) => {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const val = (e.clientX - rect.left) / rect.width;
-                          setVolume(Math.max(0, Math.min(1, val)));
-                          setIsMuted(false);
-                        }}
-                      >
-                        <div className="volume-progress" style={{ width: `${isMuted ? 0 : volume * 100}%` }} />
-                      </div>
-                    </div>
-
-                    <div className="time-display">
-                      {formatTime(currentTime)} / {formatTime(duration)}
-                    </div>
-                  </div>
-
-                  <div className="right-controls">
-                    <button className="control-btn" onClick={toggleFullscreen}>
-                      {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
-                    </button>
-                  </div>
+          {/* Custom Player Controls Skin */}
+          {!isAdPlaying && (
+            <div className="player-controls-bar">
+              {/* Timeline slider */}
+              <div className="timeline-slider-container" onClick={handleSeek}>
+                <div className="timeline-progress" style={{ width: `${progress}%` }}>
+                  <div className="timeline-handle" />
                 </div>
               </div>
-            </>
+
+              {/* Buttons Row */}
+              <div className="controls-buttons">
+                <div className="left-controls">
+                  <button className="control-btn" onClick={handlePlayPause}>
+                    {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+                  </button>
+
+                  <div className="volume-container">
+                    <button className="control-btn" onClick={() => setIsMuted(!isMuted)}>
+                      {isMuted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                    </button>
+                    <div 
+                      className="volume-slider" 
+                      onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const val = (e.clientX - rect.left) / rect.width;
+                        setVolume(Math.max(0, Math.min(1, val)));
+                        setIsMuted(false);
+                      }}
+                    >
+                      <div className="volume-progress" style={{ width: `${isMuted ? 0 : volume * 100}%` }} />
+                    </div>
+                  </div>
+
+                  <div className="time-display">
+                    {formatTime(currentTime)} / {formatTime(duration)}
+                  </div>
+                </div>
+
+                <div className="right-controls">
+                  <button className="control-btn" onClick={toggleFullscreen}>
+                    {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
 
         {/* Video Info Detail Container */}
-        {!isAdPlaying && (
-          <div className="player-video-info">
-            <div className="player-video-meta">
-              <span>Uploaded: {new Date(video.createdAt).toLocaleDateString()}</span>
-              <span>•</span>
-              <span style={{ color: 'var(--accent-pink)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                <DollarSign size={12} /> Real Ads Active
-              </span>
+        <div className="player-video-info">
+          <div className="player-video-meta">
+            <span>Uploaded: {new Date(video.createdAt).toLocaleDateString()}</span>
+            <span>•</span>
+            <span style={{ color: 'var(--accent-pink)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+              <DollarSign size={12} /> Real Ads Active
+            </span>
+          </div>
+          <h1 className="player-video-title" style={{ margin: 0, fontSize: '1.4rem', color: '#fff' }}>
+            {video.title}
+          </h1>
+          <p className="player-video-desc">{video.description || "No description provided."}</p>
+          
+          {/* Embed actual Social & Banner Ads below video details */}
+          <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', textAlign: 'center', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>
+                Bottom Banner Ad
+              </div>
+              <AdBanner bannerKey="2c37dfa939d7829280b17bf0481a3a06" width={468} height={60} />
             </div>
-            <h1 className="player-video-title" style={{ margin: 0, fontSize: '1.4rem', color: '#fff' }}>
-              {video.title}
-            </h1>
-            <p className="player-video-desc">{video.description || "No description provided."}</p>
-            
-            {/* Embed actual Social & Banner Ads below video details */}
-            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', textAlign: 'center', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>
-                  Bottom Banner Ad
-                </div>
-                <AdBanner bannerKey="2c37dfa939d7829280b17bf0481a3a06" width={468} height={60} />
-              </div>
 
-              <div>
-                <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', textAlign: 'center', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>
-                  Sponsored Native Content
-                </div>
-                <SocialAdContainer />
+            <div>
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', textAlign: 'center', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>
+                Sponsored Native Content
               </div>
+              <SocialAdContainer />
             </div>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

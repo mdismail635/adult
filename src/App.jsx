@@ -203,11 +203,6 @@ export default function App() {
                       key={video.id} 
                       video={video} 
                       onPlayClick={(vid) => {
-                        try {
-                          window.open("https://www.effectivecpmnetwork.com/jf5hm6pecw?key=fce7c69f35907acc5fda26e628d9e73f", "_blank");
-                        } catch (e) {
-                          console.warn("Direct link popup blocked:", e);
-                        }
                         setSelectedVideo(vid);
                       }}
                     />
