@@ -79,72 +79,162 @@ export default function VideoUpload({ onUploadSuccess }) {
     setUploadError('');
     setUploadProgress(0);
 
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('title', title.trim());
-      formData.append('description', description.trim());
+    // Function to execute server fallback upload
+    const uploadToServerProxy = () => {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('title', title.trim());
+        formData.append('description', description.trim());
 
-      const xhr = new XMLHttpRequest();
-      xhrRef.current = xhr;
+        const xhr = new XMLHttpRequest();
+        xhrRef.current = xhr;
 
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percentComplete = Math.round((event.loaded / event.total) * 100);
-          setUploadProgress(percentComplete);
-        }
-      };
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percentComplete);
+          }
+        };
 
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            if (response.success && response.video) {
-              const newVideo = response.video;
-
-              setUploadSuccess(true);
-              setIsUploading(false);
-              setFile(null);
-              setTitle('');
-              setDescription('');
-
-              if (onUploadSuccess) {
-                onUploadSuccess(newVideo);
+        xhr.onload = () => {
+          if (xhr.status === 200) {
+            try {
+              const response = JSON.parse(xhr.responseText);
+              if (response.success && response.video) {
+                finishUploadSuccess(response.video);
+              } else {
+                setUploadError(response.error || 'ভিডিও আপলোড করতে সমস্যা হয়েছে।');
+                setIsUploading(false);
               }
-
-              setTimeout(() => {
-                setUploadSuccess(false);
-              }, 4000);
-            } else {
-              setUploadError(response.error || 'ভিডিও আপলোড করতে সমস্যা হয়েছে।');
+            } catch {
+              setUploadError('রেসপন্স প্রসেস করতে ত্রুটি হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
               setIsUploading(false);
             }
-          } catch {
-            setUploadError('রেসপন্স প্রসেস করতে ত্রুটি হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+          } else {
+            try {
+              const errRes = JSON.parse(xhr.responseText);
+              setUploadError(errRes.error || 'আপলোড ব্যর্থ হয়েছে।');
+            } catch {
+              setUploadError('আপলোড ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+            }
             setIsUploading(false);
           }
-        } else {
-          try {
-            const errRes = JSON.parse(xhr.responseText);
-            const errMsg = errRes.error || 'ভিডিও আপলোড ব্যর্থ হয়েছে।';
-            setUploadError(`Error: ${errMsg}`);
-          } catch {
-            setUploadError('আপলোড ব্যর্থ হয়েছে। স্ট্যাটাস কোড: ' + xhr.status);
-          }
+        };
+
+        xhr.onerror = () => {
+          setUploadError('নেটওয়ার্ক সংযোগে সমস্যা। সার্ভারে কানেক্ট করা যাচ্ছে না।');
           setIsUploading(false);
-        }
-      };
+        };
 
-      xhr.onerror = () => {
-        setUploadError('নেটওয়ার্ক সংযোগে সমস্যা। সার্ভারে কানেক্ট করা যাচ্ছে না।');
+        xhr.open('POST', '/api/upload-video', true);
+        xhr.send(formData);
+      } catch (err) {
+        setUploadError('আপলোড প্রসেসিং ব্যর্থ হয়েছে: ' + err.message);
         setIsUploading(false);
-      };
+      }
+    };
 
-      xhr.open('POST', '/api/upload-video', true);
-      xhr.send(formData);
-    } catch (err) {
-      setUploadError('আপলোড প্রসেসিং ব্যর্থ হয়েছে: ' + err.message);
+    const finishUploadSuccess = (newVideo) => {
+      setUploadSuccess(true);
       setIsUploading(false);
+      setFile(null);
+      setTitle('');
+      setDescription('');
+
+      if (onUploadSuccess) {
+        onUploadSuccess(newVideo);
+      }
+
+      setTimeout(() => {
+        setUploadSuccess(false);
+      }, 4000);
+    };
+
+    // Attempt direct Cloudinary signed upload first
+    try {
+      const sigRes = await fetch('/api/cloudinary-signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: 'vibeplayer_videos' })
+      });
+
+      if (sigRes.ok) {
+        const sigData = await sigRes.json();
+        const { signature, timestamp, folder, cloudName, apiKey } = sigData;
+
+        if (cloudName && apiKey && signature) {
+          const cFormData = new FormData();
+          cFormData.append('file', file);
+          cFormData.append('api_key', apiKey);
+          cFormData.append('timestamp', timestamp);
+          cFormData.append('signature', signature);
+          cFormData.append('folder', folder);
+
+          const cXhr = new XMLHttpRequest();
+          xhrRef.current = cXhr;
+
+          cXhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percentComplete = Math.round((event.loaded / event.total) * 100);
+              setUploadProgress(percentComplete);
+            }
+          };
+
+          cXhr.onload = async () => {
+            if (cXhr.status === 200) {
+              try {
+                const cData = JSON.parse(cXhr.responseText);
+                const videoUrl = cData.secure_url;
+                const publicId = cData.public_id;
+                const duration = cData.duration || 0;
+                const thumbnailUrl = videoUrl.includes('/video/upload/')
+                  ? videoUrl.replace('/video/upload/', '/video/upload/so_0/').replace(/\.[^/.]+$/, ".jpg")
+                  : videoUrl.replace(/\.[^/.]+$/, ".jpg");
+
+                // Save metadata to server database
+                const saveRes = await fetch('/api/videos', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    id: publicId,
+                    title: title.trim(),
+                    description: description.trim(),
+                    videoUrl,
+                    thumbnailUrl,
+                    duration
+                  })
+                });
+
+                if (saveRes.ok) {
+                  const saveResult = await saveRes.json();
+                  finishUploadSuccess(saveResult.video);
+                } else {
+                  uploadToServerProxy();
+                }
+              } catch {
+                uploadToServerProxy();
+              }
+            } else {
+              // Direct Cloudinary upload returned error, fallback to server proxy
+              uploadToServerProxy();
+            }
+          };
+
+          cXhr.onerror = () => {
+            uploadToServerProxy();
+          };
+
+          cXhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`, true);
+          cXhr.send(cFormData);
+          return;
+        }
+      }
+      
+      // Fallback if signature fetching failed
+      uploadToServerProxy();
+    } catch {
+      uploadToServerProxy();
     }
   };
 

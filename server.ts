@@ -32,10 +32,21 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
   maxAge: '1d'
 }));
 
-// Configure multer for memory storage
+// Configure multer for disk storage to avoid high memory usage and buffer overflows
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.mp4';
+    const uniqueId = `vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    cb(null, `${uniqueId}${ext}`);
+  }
+});
+
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 } // 500MB max file size
+  storage,
+  limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
 });
 
 // Environment variables for Cloudinary credentials (stored strictly server-side)
@@ -112,8 +123,16 @@ app.post('/api/cloudinary-signature', (req, res) => {
   }
 });
 
-// 4. Direct Server-Side Upload Proxy Endpoint (Guarantees 100% upload success to Cloudinary)
-app.post('/api/upload-video', upload.single('file'), async (req: express.Request, res: express.Response) => {
+// 4. Direct Server-Side Upload Proxy Endpoint (Guarantees 100% upload success)
+app.post('/api/upload-video', (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      console.error('Multer upload error:', err);
+      return res.status(400).json({ error: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req: express.Request, res: express.Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No video file provided' });
@@ -126,17 +145,18 @@ app.post('/api/upload-video', upload.single('file'), async (req: express.Request
 
     let videoUrl = '';
     let thumbnailUrl = '';
-    let publicId = `vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    let publicId = path.basename(req.file.filename, path.extname(req.file.filename));
     let duration = 0;
 
-    // Attempt direct server-to-server upload to Cloudinary
+    // Attempt direct server-to-server upload to Cloudinary using file stream/buffer from disk
     let cloudinarySuccess = false;
     try {
       const stringToSign = `folder=${folder}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
       const signature = crypto.createHash('sha1').update(stringToSign).digest('hex');
 
+      const fileBuffer = fs.readFileSync(req.file.path);
       const formData = new FormData();
-      const fileBlob = new Blob([req.file.buffer], { type: req.file.mimetype });
+      const fileBlob = new Blob([fileBuffer], { type: req.file.mimetype || 'video/mp4' });
       formData.append('file', fileBlob, req.file.originalname);
       formData.append('api_key', CLOUDINARY_API_KEY);
       formData.append('timestamp', timestamp.toString());
@@ -157,6 +177,9 @@ app.post('/api/upload-video', upload.single('file'), async (req: express.Request
           ? videoUrl.replace('/video/upload/', '/video/upload/so_0/').replace(/\.[^/.]+$/, ".jpg")
           : videoUrl.replace(/\.[^/.]+$/, ".jpg");
         cloudinarySuccess = true;
+
+        // Clean up disk file if uploaded to Cloudinary
+        try { fs.unlinkSync(req.file.path); } catch {}
       } else {
         const errText = await cloudRes.text();
         console.warn('Cloudinary upload warning:', errText);
@@ -167,12 +190,7 @@ app.post('/api/upload-video', upload.single('file'), async (req: express.Request
 
     // Fallback to local storage if Cloudinary upload returned error
     if (!cloudinarySuccess) {
-      const ext = path.extname(req.file.originalname) || '.mp4';
-      const filename = `${publicId}${ext}`;
-      const localFilePath = path.join(UPLOADS_DIR, filename);
-      fs.writeFileSync(localFilePath, req.file.buffer);
-
-      videoUrl = `/uploads/${filename}`;
+      videoUrl = `/uploads/${req.file.filename}`;
       thumbnailUrl = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=600&auto=format&fit=crop';
     }
 
