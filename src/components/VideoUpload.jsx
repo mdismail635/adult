@@ -108,16 +108,25 @@ export default function VideoUpload({ onUploadSuccess }) {
                 setIsUploading(false);
               }
             } catch {
-              setUploadError('রেসপন্স প্রসেস করতে ত্রুটি হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+              setUploadError('রেসপন্স প্রসেস করতে ত্রুটি হয়েছে।');
               setIsUploading(false);
             }
           } else {
+            let errorMsg = '';
             try {
               const errRes = JSON.parse(xhr.responseText);
-              setUploadError(errRes.error || `আপলোড ব্যর্থ হয়েছে (স্ট্যাটাস: ${xhr.status})`);
+              errorMsg = errRes.error || errRes.message;
             } catch {
-              setUploadError(`আপলোড ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন। (স্ট্যাটাস: ${xhr.status})`);
+              // If server returned non-JSON string/HTML
+              if (xhr.status === 413) {
+                errorMsg = 'ভিডিও ফাইলের আকার খুব বড় (500MB এর কম ফাইল আপলোড করুন)।';
+              } else if (xhr.status === 400) {
+                errorMsg = 'আপলোড রিকোয়েস্টটি সঠিকভাবে জমা নেওয়া যায়নি (স্ট্যাটাস: 400)। অনুগ্রহ করে আবার ট্রাই করুন।';
+              } else {
+                errorMsg = `সার্ভার ত্রুটি (স্ট্যাটাস: ${xhr.status})`;
+              }
             }
+            setUploadError(errorMsg || `আপলোড ব্যর্থ হয়েছে (স্ট্যাটাস: ${xhr.status})`);
             setIsUploading(false);
           }
         };

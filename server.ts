@@ -129,14 +129,14 @@ app.post('/api/upload-video', (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err) {
       console.error('Multer upload error:', err);
-      return res.status(400).json({ error: err.message || 'File upload error' });
+      return res.status(400).json({ error: `ফাইল আপলোড ত্রুটি: ${err.message || 'ফাইলের আকার বা ফরম্যাট সঠিক নয়'}` });
     }
     next();
   });
 }, async (req: express.Request, res: express.Response) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No video file provided' });
+      return res.status(400).json({ error: 'কোন ভিডিও ফাইল পাওয়া যায়নি। অনুগ্রহ করে ফাইল সিলেক্ট করুন।' });
     }
 
     const title = (req.body.title || 'Untitled Video').trim();
@@ -158,7 +158,7 @@ app.post('/api/upload-video', (req, res, next) => {
       const fileBuffer = fs.readFileSync(req.file.path);
       const formData = new FormData();
       const fileBlob = new Blob([fileBuffer], { type: req.file.mimetype || 'video/mp4' });
-      formData.append('file', fileBlob, req.file.originalname);
+      formData.append('file', fileBlob, req.file.originalname || 'video.mp4');
       formData.append('api_key', CLOUDINARY_API_KEY);
       formData.append('timestamp', timestamp.toString());
       formData.append('signature', signature);
@@ -179,17 +179,17 @@ app.post('/api/upload-video', (req, res, next) => {
           : videoUrl.replace(/\.[^/.]+$/, ".jpg");
         cloudinarySuccess = true;
 
-        // Clean up disk file if uploaded to Cloudinary
+        // Clean up disk file if successfully uploaded to Cloudinary
         try { fs.unlinkSync(req.file.path); } catch {}
       } else {
         const errText = await cloudRes.text();
-        console.warn('Cloudinary upload warning:', errText);
+        console.warn('Cloudinary upload warning (using local fallback):', errText);
       }
     } catch (cErr) {
-      console.warn('Cloudinary server request error:', cErr);
+      console.warn('Cloudinary server request error (using local fallback):', cErr);
     }
 
-    // Fallback to local storage if Cloudinary upload returned error
+    // Fallback to local high-speed server storage if Cloudinary upload returned error
     if (!cloudinarySuccess) {
       videoUrl = `/uploads/${req.file.filename}`;
       thumbnailUrl = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=600&auto=format&fit=crop';
@@ -210,7 +210,7 @@ app.post('/api/upload-video', (req, res, next) => {
     const updatedVideos = [newVideo, ...videos.filter(v => v.id !== newVideo.id)];
     writeVideos(updatedVideos);
 
-    res.json({
+    return res.json({
       success: true,
       cloudinary: cloudinarySuccess,
       video: newVideo,
@@ -218,7 +218,7 @@ app.post('/api/upload-video', (req, res, next) => {
     });
   } catch (error: any) {
     console.error('Upload handler error:', error);
-    res.status(500).json({ error: error.message || 'Server upload failed' });
+    return res.status(500).json({ error: error.message || 'সার্ভারে ভিডিও আপলোড ব্যর্থ হয়েছে' });
   }
 });
 
