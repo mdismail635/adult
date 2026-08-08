@@ -6,13 +6,10 @@ import {
 import AdBanner from './AdBanner';
 import SocialAdContainer from './SocialAdContainer';
 
-const DEFAULT_AD_VIDEO = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4";
-
 export default function VideoPlayerWithAds({ video, onClose }) {
-  // Set isAdPlaying to false to turn off the 30-60s pre-roll video ads countdown
-  const [isAdPlaying, setIsAdPlaying] = useState(false);
-  const [totalAdTime] = useState(0); 
-  const [adCountdown, setAdCountdown] = useState(0);
+  // Set isAdPlaying to true by default for Interstitial (ইন্ডাস্ট্রিয়াল) Ad on video play
+  const [isAdPlaying, setIsAdPlaying] = useState(video.adsEnabled !== false);
+  const [adCountdown, setAdCountdown] = useState(5);
   const [canSkipAd, setCanSkipAd] = useState(false);
   
   const [isPlaying, setIsPlaying] = useState(false);
@@ -28,7 +25,24 @@ export default function VideoPlayerWithAds({ video, onClose }) {
   const playerContainerRef = useRef(null);
   const bannerTimerRef = useRef(null);
 
-  // Auto-play main video on mount when pre-roll ads are off
+  // 5-Second Interstitial Countdown Timer
+  useEffect(() => {
+    if (isAdPlaying) {
+      const timer = setInterval(() => {
+        setAdCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setCanSkipAd(true);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [isAdPlaying]);
+
+  // Auto-play main video on mount when pre-roll/interstitial is finished
   useEffect(() => {
     if (!isAdPlaying) {
       const playTimer = setTimeout(() => {
@@ -195,35 +209,57 @@ export default function VideoPlayerWithAds({ video, onClose }) {
         {/* Custom Video Player Container */}
         <div className="video-player-container" ref={playerContainerRef}>
           {isAdPlaying ? (
-            /* Pre-roll Ad Screen */
-            <div className="ad-overlay-screen">
-              <video
-                ref={adVideoRef}
-                className="ad-video"
-                src={DEFAULT_AD_VIDEO}
-                autoPlay
-                playsInline
-                loop
-                onClick={handlePlayPause}
-                onTimeUpdate={handleTimeUpdate}
-              />
-              <div className="ad-info-bar">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <div className="ad-badge-indicator">
-                    <ShoppingBag size={12} /> Sponsored Ad
-                  </div>
-                  <div className="ad-countdown-pill">
-                    Ad ends in: {adCountdown}s
-                  </div>
+            /* Interstitial (ইন্ডাস্ট্রিয়াল) Ad Screen */
+            <div className="ad-overlay-screen" style={{ background: '#0a0a16', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.5rem', position: 'relative' }}>
+              <div style={{ position: 'absolute', top: '1rem', left: '1rem', background: 'rgba(236, 72, 153, 0.2)', color: 'var(--accent-pink)', border: '1px solid var(--accent-pink)', padding: '0.35rem 0.75rem', borderRadius: '20px', fontSize: '0.8rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <ShoppingBag size={14} /> স্পন্সর ইন্টারস্টিশিয়াল এড (Sponsored Interstitial Ad)
+              </div>
+
+              {/* Interstitial Ad Banner Component */}
+              <div style={{ margin: '2rem 0 1rem 0', width: '100%', display: 'flex', justifyContent: 'center' }}>
+                <AdBanner bannerKey="e72872f3ed67b48725149e3ab09e20ff" width={468} height={60} />
+              </div>
+
+              {/* High-Converting Direct Link Card */}
+              <div 
+                onClick={handleSkipAd}
+                style={{ 
+                  background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(236, 72, 153, 0.2) 100%)',
+                  border: '2px solid var(--accent-purple)',
+                  borderRadius: '12px',
+                  padding: '1.25rem 2rem',
+                  maxWidth: '480px',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  boxShadow: '0 8px 32px rgba(124, 58, 237, 0.3)',
+                  marginBottom: '1.5rem',
+                  transition: 'transform 0.2s ease, border-color 0.2s ease'
+                }}
+              >
+                <div style={{ color: '#fff', fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.4rem' }}>
+                  🔥 বিশেষ স্পন্সর অফার (Sponsored Offer)
+                </div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.8rem' }}>
+                  ভিডিও লোড হচ্ছে... অফার দেখতে বা সরাসরি ভিডিও চালু করতে নিচে ক্লিক করুন।
+                </div>
+                <div style={{ background: 'var(--accent-purple)', color: '#fff', fontWeight: '600', padding: '0.6rem 1.2rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
+                  <DollarSign size={16} /> স্পন্সর সাইটে যান ও ভিডিও প্লে করুন
+                </div>
+              </div>
+
+              {/* Timer Bar & Skip Action */}
+              <div className="ad-info-bar" style={{ width: '100%', maxWidth: '480px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.05)', padding: '0.75rem 1rem', borderRadius: '8px' }}>
+                <div className="ad-countdown-pill" style={{ fontSize: '0.9rem', color: '#fff', fontWeight: '600' }}>
+                  {canSkipAd ? 'ভিডিও প্রস্তুত!' : `এড শেষ হতে বাকি: ${adCountdown}s`}
                 </div>
 
                 {canSkipAd ? (
-                  <button className="ad-skip-btn" onClick={handleSkipAd}>
-                    Skip Ad <SkipForward size={16} />
+                  <button className="ad-skip-btn" onClick={handleSkipAd} style={{ background: 'var(--accent-pink)', color: '#fff', padding: '0.5rem 1rem', borderRadius: '6px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    Skip Ad / ভিডিও দেখুন <SkipForward size={16} />
                   </button>
                 ) : (
-                  <div className="ad-skip-locked-btn">
-                    Skip Ad in {30 - (totalAdTime - adCountdown)}s
+                  <div className="ad-skip-locked-btn" style={{ opacity: 0.6, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    Skip Ad in {adCountdown}s
                   </div>
                 )}
               </div>
