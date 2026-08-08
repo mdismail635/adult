@@ -1,0 +1,8 @@
+{
+  "name": "VibePlayer - Video Hosting & Platform",
+  "description": "Cloudinary video hosting and player platform with customizable ads and library management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
