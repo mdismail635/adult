@@ -44,19 +44,22 @@ export default function App() {
         console.error('Failed to load server config, falling back:', err);
       });
 
-    // 2. Fetch persisted video library from server
+    // 2. Fetch persisted video library from server or fallback to localStorage (for Netlify)
     fetch('/api/videos')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok || !res.headers.get('content-type')?.includes('application/json')) {
+          throw new Error('Server API not returning JSON (Netlify or static host)');
+        }
+        return res.json();
+      })
       .then((serverVideos) => {
         if (Array.isArray(serverVideos)) {
-          // Filter out any demo videos if present
           const cleanVideos = serverVideos.filter(v => v && v.id && !String(v.id).startsWith('demo-'));
           setVideos(cleanVideos);
           localStorage.setItem('cloudinary_videos', JSON.stringify(cleanVideos));
         }
       })
-      .catch((err) => {
-        console.error('Failed to load videos from server, checking local storage:', err);
+      .catch(() => {
         const savedVideos = localStorage.getItem('cloudinary_videos');
         if (savedVideos) {
           try {

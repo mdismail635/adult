@@ -1,6 +1,16 @@
 import React, { useState, useRef } from 'react';
 import { UploadCloud, FileVideo, CheckCircle2, ShieldAlert, ShieldCheck, Info } from 'lucide-react';
 
+// Helper for client-side SHA-1 hashing using Web Crypto API
+async function generateClientSignature(folder, timestamp, apiSecret) {
+  const stringToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(stringToSign);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export default function VideoUpload({ onUploadSuccess }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -160,87 +170,129 @@ export default function VideoUpload({ onUploadSuccess }) {
       }, 4000);
     };
 
-    // Attempt direct Cloudinary signed upload first
+    // Attempt Cloudinary signed upload (works on Netlify static hosting & server)
     try {
-      const sigRes = await fetch('/api/cloudinary-signature', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: 'vibeplayer_videos' })
-      });
+      const timestamp = Math.round(Date.now() / 1000);
+      const folder = 'vibeplayer_videos';
+      const cloudName = 'dklhnq56v';
+      const apiKey = '873455389514395';
+      const apiSecret = 'WArwY2sME9zRwiDwDBVr5PSNu8U';
 
-      if (sigRes.ok) {
-        const sigData = await sigRes.json();
-        const { signature, timestamp, folder, cloudName, apiKey } = sigData;
+      let signature = '';
 
-        if (cloudName && apiKey && signature) {
-          const cFormData = new FormData();
-          cFormData.append('file', file);
-          cFormData.append('api_key', apiKey);
-          cFormData.append('timestamp', timestamp);
-          cFormData.append('signature', signature);
-          cFormData.append('folder', folder);
+      // 1. Try to get signature from server endpoint
+      try {
+        const sigRes = await fetch('/api/cloudinary-signature', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder })
+        });
+        if (sigRes.ok) {
+          const sigData = await sigRes.json();
+          if (sigData && sigData.signature) {
+            signature = sigData.signature;
+          }
+        }
+      } catch {
+        // Server API not present (e.g. Netlify static hosting)
+      }
 
-          const cXhr = new XMLHttpRequest();
-          xhrRef.current = cXhr;
-
-          cXhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
-              const percentComplete = Math.round((event.loaded / event.total) * 100);
-              setUploadProgress(percentComplete);
-            }
-          };
-
-          cXhr.onload = async () => {
-            if (cXhr.status === 200) {
-              try {
-                const cData = JSON.parse(cXhr.responseText);
-                const videoUrl = cData.secure_url;
-                const publicId = cData.public_id;
-                const duration = cData.duration || 0;
-                const thumbnailUrl = videoUrl.includes('/video/upload/')
-                  ? videoUrl.replace('/video/upload/', '/video/upload/so_0/').replace(/\.[^/.]+$/, ".jpg")
-                  : videoUrl.replace(/\.[^/.]+$/, ".jpg");
-
-                // Save metadata to server database
-                const saveRes = await fetch('/api/videos', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    id: publicId,
-                    title: title.trim(),
-                    description: description.trim(),
-                    videoUrl,
-                    thumbnailUrl,
-                    duration
-                  })
-                });
-
-                if (saveRes.ok) {
-                  const saveResult = await saveRes.json();
-                  finishUploadSuccess(saveResult.video);
-                } else {
-                  uploadToServerProxy();
-                }
-              } catch {
-                uploadToServerProxy();
-              }
-            } else {
-              // Direct Cloudinary upload returned error, fallback to server proxy
-              uploadToServerProxy();
-            }
-          };
-
-          cXhr.onerror = () => {
-            uploadToServerProxy();
-          };
-
-          cXhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, true);
-          cXhr.send(cFormData);
-          return;
+      // 2. Fallback: generate signature directly on client for Netlify / static hosts
+      if (!signature) {
+        try {
+          signature = await generateClientSignature(folder, timestamp, apiSecret);
+        } catch (sErr) {
+          console.warn('Client signature generation error:', sErr);
         }
       }
-      
-      // Fallback if signature fetching failed
+
+      if (signature) {
+        const cFormData = new FormData();
+        cFormData.append('file', file);
+        cFormData.append('api_key', apiKey);
+        cFormData.append('timestamp', timestamp.toString());
+        cFormData.append('signature', signature);
+        cFormData.append('folder', folder);
+
+        const cXhr = new XMLHttpRequest();
+        xhrRef.current = cXhr;
+
+        cXhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percentComplete);
+          }
+        };
+
+        cXhr.onload = async () => {
+          if (cXhr.status === 200) {
+            try {
+              const cData = JSON.parse(cXhr.responseText);
+              const videoUrl = cData.secure_url;
+              const publicId = cData.public_id;
+              const duration = cData.duration || 0;
+              const thumbnailUrl = videoUrl.includes('/video/upload/')
+                ? videoUrl.replace('/video/upload/', '/video/upload/so_0/').replace(/\.[^/.]+$/, ".jpg")
+                : videoUrl.replace(/\.[^/.]+$/, ".jpg");
+
+              const newVideo = {
+                id: publicId || `vid_${Date.now()}`,
+                title: title.trim(),
+                description: description.trim(),
+                videoUrl,
+                thumbnailUrl,
+                duration,
+                createdAt: new Date().toISOString(),
+                adsEnabled: true
+              };
+
+              // Persist to browser localStorage for Netlify
+              try {
+                const savedVideos = JSON.parse(localStorage.getItem('cloudinary_videos') || '[]');
+                const updated = [newVideo, ...savedVideos.filter(v => v && v.id !== newVideo.id)];
+                localStorage.setItem('cloudinary_videos', JSON.stringify(updated));
+              } catch (lsErr) {
+                console.warn('LocalStorage save error:', lsErr);
+              }
+
+              // Non-blocking sync to server if running fullstack
+              fetch('/api/videos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newVideo)
+              }).catch(() => {});
+
+              finishUploadSuccess(newVideo);
+              return;
+            } catch (pErr) {
+              console.error('Error processing upload response:', pErr);
+            }
+          }
+
+          // If direct Cloudinary upload failed, check for server proxy fallback
+          let cloudErrMsg = '';
+          try {
+            const errRes = JSON.parse(cXhr.responseText);
+            cloudErrMsg = errRes.error?.message;
+          } catch {}
+
+          if (cloudErrMsg) {
+            setUploadError(`ক্লাউডিনারি আপলোড ব্যর্থ: ${cloudErrMsg}`);
+            setIsUploading(false);
+          } else {
+            uploadToServerProxy();
+          }
+        };
+
+        cXhr.onerror = () => {
+          uploadToServerProxy();
+        };
+
+        cXhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, true);
+        cXhr.send(cFormData);
+        return;
+      }
+
       uploadToServerProxy();
     } catch {
       uploadToServerProxy();

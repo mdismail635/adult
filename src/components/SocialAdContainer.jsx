@@ -44,6 +44,7 @@ export default function SocialAdContainer() {
         width="100%"
         height="80"
         style={{ border: 'none', width: '100%', height: '80px', display: 'block' }}
+        sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals allow-top-navigation-by-user-activation"
         scrolling="no"
       />
     </div>
